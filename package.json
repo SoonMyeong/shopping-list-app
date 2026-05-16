@@ -1,0 +1,16 @@
+{
+  "name": "shopping-list-app",
+  "version": "1.0.0",
+  "main": "shopping-list.test.js",
+  "scripts": {
+    "test": "node shopping-list.test.js"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "description": "바닐라 JS 쇼핑 리스트 웹 앱 + Playwright E2E 테스트",
+  "dependencies": {
+    "playwright": "^1.60.0"
+  }
+}
