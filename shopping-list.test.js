@@ -31,13 +31,18 @@ function log(status, testName, detail = '', filename = '') {
 }
 
 async function clearDatabase(page) {
-  await fetch(`${SUPABASE_URL}/rest/v1/shopping_items?checked=neq.null`, {
+  // PostgREST 올바른 구문: id=not.is.null (모든 행 매칭)
+  const res = await fetch(`${SUPABASE_URL}/rest/v1/shopping_items?id=not.is.null`, {
     method: 'DELETE',
     headers: {
       'apikey': SUPABASE_ANON_KEY,
       'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
     }
   });
+  if (!res.ok) {
+    const text = await res.text();
+    console.error(`clearDatabase 오류 ${res.status}:`, text);
+  }
   await page.reload();
   await page.waitForSelector('.empty-msg, .item', { timeout: 10000 });
 }
