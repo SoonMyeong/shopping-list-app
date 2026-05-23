@@ -146,26 +146,32 @@
     <h1>쇼핑 리스트</h1>
     <div class="input-row">
       <input type="text" id="new-item" placeholder="아이템 추가..." autocomplete="off" />
-      <button class="add-btn" onclick="addItem()">추가</button>
+      <button class="add-btn">추가</button>
     </div>
     <ul class="item-list" id="item-list"></ul>
-    <button class="clear-btn" id="clear-btn" onclick="clearCompleted()">완료 항목 지우기</button>
+    <button class="clear-btn" id="clear-btn">완료 항목 지우기</button>
   </div>
 
-  <script>
-    const KEY = 'shopping-list';
+  <script type="module">
+    import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 
-    function loadItems() {
-      try { return JSON.parse(localStorage.getItem(KEY)) || []; }
-      catch { return []; }
+    const SUPABASE_URL = 'https://ycwbzlexgmlhsdqtrfwg.supabase.co';
+    const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inljd2J6bGV4Z21saHNkcXRyZndnIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzk0NjU4NzIsImV4cCI6MjA5NTA0MTg3Mn0.ar1-9qeiO_tsZW0e1vxt3-0Y8pUiZn3OancrGK_6Ai8';
+    const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+    function escapeHtml(str) {
+      return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
     }
 
-    function saveItems(items) {
-      localStorage.setItem(KEY, JSON.stringify(items));
-    }
+    async function render() {
+      const { data: items, error } = await supabase
+        .from('shopping_items')
+        .select('*')
+        .order('created_at', { ascending: true });
 
-    function render() {
-      const items = loadItems();
+      if (error) { console.error(error); alert('오류가 발생했습니다'); return; }
+
       const list = document.getElementById('item-list');
       const clearBtn = document.getElementById('clear-btn');
 
@@ -174,10 +180,9 @@
       } else {
         list.innerHTML = items.map(item => `
           <li class="item${item.checked ? ' checked' : ''}">
-            <input type="checkbox" ${item.checked ? 'checked' : ''}
-              onchange="toggleItem(${item.id})" />
+            <input type="checkbox" data-id="${item.id}" ${item.checked ? 'checked' : ''} />
             <span class="item-name">${escapeHtml(item.name)}</span>
-            <button class="delete-btn" onclick="deleteItem(${item.id})" title="삭제">🗑</button>
+            <button class="delete-btn" data-id="${item.id}" title="삭제">🗑</button>
           </li>
         `).join('');
       }
@@ -186,47 +191,61 @@
       clearBtn.classList.toggle('visible', hasChecked);
     }
 
-    function addItem() {
+    async function addItem() {
       const input = document.getElementById('new-item');
       const name = input.value.trim();
       if (!name) return;
 
-      const items = loadItems();
-      items.push({ id: Date.now(), name, checked: false });
-      saveItems(items);
+      const { error } = await supabase.from('shopping_items').insert({ name, checked: false });
+      if (error) { console.error(error); alert('오류가 발생했습니다'); return; }
       input.value = '';
-      render();
+      await render();
     }
 
-    function toggleItem(id) {
-      const items = loadItems();
-      const item = items.find(i => i.id === id);
-      if (item) item.checked = !item.checked;
-      saveItems(items);
-      render();
+    async function toggleItem(id) {
+      const { data: item, error: e1 } = await supabase
+        .from('shopping_items').select('checked').eq('id', id).single();
+      if (e1) { console.error(e1); alert('오류가 발생했습니다'); return; }
+
+      const { error: e2 } = await supabase
+        .from('shopping_items').update({ checked: !item.checked }).eq('id', id);
+      if (e2) { console.error(e2); alert('오류가 발생했습니다'); return; }
+      await render();
     }
 
-    function deleteItem(id) {
-      const items = loadItems().filter(i => i.id !== id);
-      saveItems(items);
-      render();
+    async function deleteItem(id) {
+      const { error } = await supabase.from('shopping_items').delete().eq('id', id);
+      if (error) { console.error(error); alert('오류가 발생했습니다'); return; }
+      await render();
     }
 
-    function clearCompleted() {
-      const items = loadItems().filter(i => !i.checked);
-      saveItems(items);
-      render();
+    async function clearCompleted() {
+      const { error } = await supabase.from('shopping_items').delete().eq('checked', true);
+      if (error) { console.error(error); alert('오류가 발생했습니다'); return; }
+      await render();
     }
 
-    function escapeHtml(str) {
-      return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
-                .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
-    }
+    // 체크박스 토글 (이벤트 위임)
+    document.getElementById('item-list').addEventListener('change', async (e) => {
+      if (e.target.matches('input[type="checkbox"]')) {
+        await toggleItem(e.target.dataset.id);
+      }
+    });
 
+    // 삭제 버튼 (이벤트 위임)
+    document.getElementById('item-list').addEventListener('click', async (e) => {
+      const btn = e.target.closest('.delete-btn');
+      if (btn) await deleteItem(btn.dataset.id);
+    });
+
+    // 정적 버튼들
+    document.querySelector('.add-btn').addEventListener('click', addItem);
     document.getElementById('new-item').addEventListener('keydown', e => {
       if (e.key === 'Enter') addItem();
     });
+    document.getElementById('clear-btn').addEventListener('click', clearCompleted);
 
+    // 초기 렌더링
     render();
   </script>
 </body>

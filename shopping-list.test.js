@@ -5,6 +5,9 @@ const fs = require('fs');
 const FILE_URL = 'file://' + path.resolve(__dirname, 'index.html').replace(/\\/g, '/');
 const SS_DIR = path.join(__dirname, 'screenshots');
 
+const SUPABASE_URL = 'https://ycwbzlexgmlhsdqtrfwg.supabase.co';
+const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inljd2J6bGV4Z21saHNkcXRyZndnIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzk0NjU4NzIsImV4cCI6MjA5NTA0MTg3Mn0.ar1-9qeiO_tsZW0e1vxt3-0Y8pUiZn3OancrGK_6Ai8';
+
 let browser, page;
 const results = [];
 let ssIndex = 0;
@@ -27,14 +30,22 @@ function log(status, testName, detail = '', filename = '') {
   console.log(msg);
 }
 
-async function clearStorage() {
-  await page.evaluate(() => localStorage.clear());
+async function clearDatabase(page) {
+  await fetch(`${SUPABASE_URL}/rest/v1/shopping_items?checked=neq.null`, {
+    method: 'DELETE',
+    headers: {
+      'apikey': SUPABASE_ANON_KEY,
+      'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
+    }
+  });
   await page.reload();
+  await page.waitForSelector('.empty-msg, .item', { timeout: 10000 });
 }
 
 async function addItem(name) {
   await page.fill('#new-item', name);
   await page.click('.add-btn');
+  await page.waitForSelector('.item-name', { timeout: 10000 });
 }
 
 async function runTests() {
@@ -43,9 +54,10 @@ async function runTests() {
   page = await browser.newPage();
   await page.setViewportSize({ width: 600, height: 700 });
   await page.goto(FILE_URL);
+  await page.waitForSelector('.empty-msg, .item', { timeout: 10000 });
 
   // ── 1. 초기 상태: 빈 메시지 표시 ─────────────────────────
-  await clearStorage();
+  await clearDatabase(page);
   const emptyMsg = await page.locator('.empty-msg').isVisible();
   const f1 = await shot('01_초기상태_빈메시지');
   emptyMsg
@@ -63,6 +75,7 @@ async function runTests() {
   // ── 3. 아이템 추가 (Enter 키) ─────────────────────────────
   await page.fill('#new-item', '바나나');
   await page.press('#new-item', 'Enter');
+  await page.locator('.item-name').filter({ hasText: '바나나' }).waitFor({ timeout: 10000 });
   const item2 = await page.locator('.item-name', { hasText: '바나나' }).isVisible();
   const f3 = await shot('03_아이템추가_Enter');
   item2
@@ -73,6 +86,8 @@ async function runTests() {
   const countBefore = await page.locator('.item').count();
   await page.fill('#new-item', '   ');
   await page.click('.add-btn');
+  // 빈 입력은 DB 호출 없이 즉시 무시됨 — 짧게 대기
+  await page.waitForTimeout(500);
   const countAfter = await page.locator('.item').count();
   const f4 = await shot('04_빈입력무시');
   countBefore === countAfter
@@ -82,6 +97,7 @@ async function runTests() {
   // ── 5. 체크박스 체크 (완료 처리) ─────────────────────────
   const checkbox = page.locator('.item').filter({ hasText: '사과' }).locator('input[type="checkbox"]');
   await checkbox.click();
+  await page.waitForSelector('.item.checked', { timeout: 10000 });
   const isChecked = await checkbox.isChecked();
   const hasStrike = await page.locator('.item.checked .item-name', { hasText: '사과' }).isVisible();
   const f5 = await shot('05_체크박스_체크');
@@ -98,6 +114,7 @@ async function runTests() {
 
   // ── 7. 체크박스 언체크 ────────────────────────────────────
   await checkbox.click();
+  await page.waitForFunction(() => !document.querySelector('.item.checked'), { timeout: 10000 });
   const isUnchecked = !(await checkbox.isChecked());
   const noStrike = !(await page.locator('.item.checked .item-name', { hasText: '사과' }).isVisible());
   const f7 = await shot('07_체크박스_언체크');
@@ -115,6 +132,10 @@ async function runTests() {
   // ── 9. 아이템 삭제 ────────────────────────────────────────
   const deleteBtn = page.locator('.item').filter({ hasText: '사과' }).locator('.delete-btn');
   await deleteBtn.click();
+  await page.waitForFunction(
+    () => !Array.from(document.querySelectorAll('.item-name')).some(el => el.textContent.includes('사과')),
+    { timeout: 10000 }
+  );
   const appleGone = !(await page.locator('.item-name', { hasText: '사과' }).isVisible());
   const f9 = await shot('09_아이템삭제');
   appleGone
@@ -125,9 +146,18 @@ async function runTests() {
   await addItem('딸기');
   await addItem('포도');
   await page.locator('.item').filter({ hasText: '딸기' }).locator('input[type="checkbox"]').click();
+  await page.waitForSelector('.item.checked', { timeout: 10000 });
   await page.locator('.item').filter({ hasText: '포도' }).locator('input[type="checkbox"]').click();
+  await page.waitForFunction(
+    () => document.querySelectorAll('.item.checked').length === 2,
+    { timeout: 10000 }
+  );
   const f10a = await shot('10a_완료항목지우기_전');
   await page.locator('.clear-btn').click();
+  await page.waitForFunction(
+    () => !Array.from(document.querySelectorAll('.item-name')).some(el => el.textContent.includes('딸기')),
+    { timeout: 10000 }
+  );
   const strawberryGone = !(await page.locator('.item-name', { hasText: '딸기' }).isVisible());
   const grapeGone = !(await page.locator('.item-name', { hasText: '포도' }).isVisible());
   const bananaLeft = await page.locator('.item-name', { hasText: '바나나' }).isVisible();
@@ -136,15 +166,17 @@ async function runTests() {
     ? log('PASS', '완료 항목 지우기', '완료 항목 삭제, 미완료 항목 유지됨', `${f10a} → ${f10b}`)
     : log('FAIL', '완료 항목 지우기', `딸기삭제=${strawberryGone}, 포도삭제=${grapeGone}, 바나나유지=${bananaLeft}`, f10b);
 
-  // ── 11. localStorage 영속성 ───────────────────────────────
+  // ── 11. Supabase 영속성 ─────────────────────────────────
   await addItem('망고');
+  await page.locator('.item-name').filter({ hasText: '망고' }).waitFor({ timeout: 10000 });
   const f11a = await shot('11a_새로고침_전');
   await page.reload();
-  const mangoAfterReload = await page.locator('.item-name', { hasText: '망고' }).isVisible();
+  await page.waitForSelector('.empty-msg, .item', { timeout: 10000 });
+  const mangoVisible = await page.locator('.item-name').filter({ hasText: '망고' }).isVisible();
   const f11b = await shot('11b_새로고침_후');
-  mangoAfterReload
-    ? log('PASS', 'localStorage 영속성', '새로고침 후에도 데이터 유지됨', `${f11a} → ${f11b}`)
-    : log('FAIL', 'localStorage 영속성', '새로고침 후 데이터 사라짐', f11b);
+  mangoVisible
+    ? log('PASS', 'Supabase 영속성', '새로고침 후에도 데이터 유지됨', `${f11a} → ${f11b}`)
+    : log('FAIL', 'Supabase 영속성', '새로고침 후 데이터 사라짐', f11b);
 
   // ── 결과 요약 ─────────────────────────────────────────────
   const passed = results.filter(r => r.status === 'PASS').length;
